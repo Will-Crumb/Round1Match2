@@ -14,6 +14,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
+import optuna
+
 
 # ---------------------------
 # Config
@@ -152,13 +154,13 @@ def run_classification(cfg: RFConfig):
 
     print("\n== Adult Income (classification) ==")
     eval_split("Train", X_train, y_train)
-    eval_split(" Val ", X_val, y_val)
+    val_acc, val_f1 = eval_split(" Val ", X_val, y_val)
     eval_split(" Test", X_test, y_test)
 
     print("\nClassification report (Validation):")
     print(classification_report(y_val, pipe.predict(X_val), digits=4))
 
-    return pipe
+    return pipe, val_f1
 
 
 def run_regression(cfg: RFConfig):
@@ -178,11 +180,52 @@ def run_regression(cfg: RFConfig):
 
     print("\n== California Housing (regression) ==")
     eval_split("Train", X_train, y_train)
-    eval_split(" Val ", X_val, y_val)
+    val_r2, val_mae = eval_split(" Val ", X_val, y_val)
     eval_split(" Test", X_test, y_test)
 
-    return pipe
+    return pipe, val_r2
 
+def objective(trial, dataset: str):
+    cfg = RFConfig(
+        dataset=dataset,
+        n_estimators=trial.suggest_int("n_estimators", 100, 200),
+        max_depth=trial.suggest_int("max_depth", 5, 10),
+        min_samples_split=trial.suggest_int("min_samples_split", 2, 5),
+        min_samples_leaf=trial.suggest_int("min_samples_leaf", 1, 5),
+        max_features=trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
+        random_state=42
+    )
+
+    if dataset == "adult":
+        _,score = run_classification(cfg)
+        return score
+    else:
+        _,score = run_regression(cfg)
+        return score
+    
+def run_optuna(dataset: str, n_trials: int, save_path: str):
+    study = optuna.create_study(direction="maximize")
+    study.optimize(lambda trial: objective(trial, dataset), n_trials=n_trials)
+
+    print("\nBest hyperparameters:", study.best_params)
+    print("Best score:", study.best_value)
+
+    best_params = study.best_params
+    cfg = RFConfig(
+        dataset=dataset,
+        n_estimators=best_params["n_estimators"],
+        max_depth = best_params["max_depth"],
+        min_samples_split=best_params["min_samples_split"],
+        min_samples_leaf=best_params["min_samples_leaf"],
+        max_features=best_params["max_features"],
+        random_state=42,
+        save_path=save_path
+    )
+
+    if dataset == "adult":
+        pipe, _ = run_classification(cfg)
+    else:
+        pipe, _ = run_regression(cfg)
 
 # ---------------------------
 # CLI
@@ -201,39 +244,44 @@ def parse_args():
     p.add_argument("--min_samples_leaf", type=int, default=1)
     p.add_argument("--max_features", type=str, default="sqrt")
     p.add_argument("--n_jobs", type=int, default=-1)
-    p.add_argument("--save_path", type=str, default="./rf_model.joblib")
+    p.add_argument("--save_path", type=str, default="./rf_model_optuna.joblib")
+    p.add_argument("--optimize", type=bool, default="true")
+    p.add_argument("--n_trials", type=int, default=5)
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    cfg = RFConfig(
-        dataset=args.dataset,
-        test_size=args.test_size,
-        val_size=args.val_size,
-        random_state=args.random_state,
-        n_estimators=args.n_estimators,
-        max_depth=args.max_depth,
-        min_samples_split=args.min_samples_split,
-        min_samples_leaf=args.min_samples_leaf,
-        max_features=args.max_features,
-        n_jobs=args.n_jobs,
-        save_path=args.save_path,
-    )
 
-    if cfg.dataset == "adult":
-        pipe = run_classification(cfg)
+    if args.optimize:
+        run_optuna(args.dataset, args.n_trials, args.save_path)
     else:
-        pipe = run_regression(cfg)
+        cfg = RFConfig(
+            dataset=args.dataset,
+            test_size=args.test_size,
+            val_size=args.val_size,
+            random_state=args.random_state,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            min_samples_split=args.min_samples_split,
+            min_samples_leaf=args.min_samples_leaf,
+            max_features=args.max_features,
+            n_jobs=args.n_jobs,
+            save_path=args.save_path,
+        )
 
-    # Optional: persist the whole pipeline with preprocessing + model
-    try:
-        import joblib
-        joblib.dump({"pipeline": pipe, "config": cfg.__dict__}, cfg.save_path)
-        print(f"\nSaved pipeline to: {cfg.save_path}")
-    except Exception as e:
-        print(f"\nWarning: could not save model to {cfg.save_path}: {e}")
+        if cfg.dataset == "adult":
+            pipe, _ = run_classification(cfg)
+        else:
+            pipe, _ = run_regression(cfg)
 
+        # Optional: persist the whole pipeline with preprocessing + model
+        try:
+            import joblib
+            joblib.dump({"pipeline": pipe, "config": cfg.__dict__}, cfg.save_path)
+            print(f"\nSaved pipeline to: {cfg.save_path}")
+        except Exception as e:
+            print(f"\nWarning: could not save model to {cfg.save_path}: {e}")
 
 if __name__ == "__main__":
     main()
