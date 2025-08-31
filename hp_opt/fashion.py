@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
+import optuna
 
 # ---------------------------
 # Repro + Device
@@ -91,7 +92,7 @@ class TrainConfig:
     val_split: float = 0.1
     num_workers: int = 4
     data_dir: str = "./data"
-    save_path: str = "./fashion_mnist_baseline.pt"
+    save_path: str = "./fashion_mnist_optuna.pt"
 
 
 def accuracy(logits, targets):
@@ -196,6 +197,51 @@ def train_eval(cfg: TrainConfig):
     te_loss, te_acc = evaluate(model, test_loader, criterion, device)
     print(f"Test loss {te_loss:.4f} acc {te_acc:.4f}")
 
+def objective(trial):
+    cfg = TrainConfig(
+        model_type="cnn",
+        batch_size=trial.suggest_categorical("batch_size", [64, 128, 256]),
+        epochs=5,
+        lr=trial.suggest_loguniform("lr", 1e-4, 1e-1),
+        weight_decay=trial.suggest_loguniform("weight_decay", 1e-6, 1e-2),
+        dropout=trial.suggest_uniform("dropout", 0.1, 0.5),
+        seed=42
+    )
+    set_seed(cfg.seed)
+    device = get_device()
+    train_loader, val_loader, test_loader = get_dataloaders(cfg)
+    model = build_model(cfg).to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+
+    best_val_acc = 0.0
+    for epoch in range(cfg.epochs):
+        train_one_epoch(model, train_loader, criterion, optimizer, device)
+        _, va_acc = evaluate(model, val_loader,criterion, device)
+        best_val_acc = max(best_val_acc, va_acc)
+
+    return best_val_acc
+
+def run_optuna(n_trials, save_path="./fashion_mnist_optuna.pt"):
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=n_trials)
+
+    print("Best hyperparameters:", study.best_params)
+    print("Best validation accurancy:", study.best_value)
+
+    # Retrain final model with best params
+    best_params = study.best_params
+    cfg = TrainConfig(
+        model_type="cnn",
+        batch_size=best_params["batch_size"],
+        epochs=10,
+        lr=best_params["lr"],
+        weight_decay=best_params["weight_decay"],
+        dropout=best_params["dropout"],
+        seed=42,
+        save_path=save_path
+    )
+    train_eval(cfg)
 
 # ---------------------------
 # CLI
@@ -213,27 +259,32 @@ def parse_args():
     p.add_argument("--val_split", type=float, default=0.1)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--data_dir", type=str, default="./data")
-    p.add_argument("--save_path", type=str, default="./fashion_mnist_baseline.pt")
+    p.add_argument("--save_path", type=str, default="./fashion_mnist_optuna.pt")
+    p.add_argument("--optimize", type=bool, default="true")
+    p.add_argument("--n_trials", type=int, default=5, help="Number of Optuna trials")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    cfg = TrainConfig(
-        model_type=args.model,
-        batch_size=args.batch_size,
-        epochs=args.epochs,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        dropout=args.dropout,
-        seed=args.seed,
-        val_split=args.val_split,
-        num_workers=args.num_workers,
-        data_dir=args.data_dir,
-        save_path=args.save_path,
-    )
-    train_eval(cfg)
 
+    if args.optimize:
+        run_optuna(n_trials=args.n_trials)
+    else:
+        cfg = TrainConfig(
+            model_type=args.model,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            dropout=args.dropout,
+            seed=args.seed,
+            val_split=args.val_split,
+            num_workers=args.num_workers,
+            data_dir=args.data_dir,
+            save_path=args.save_path,
+        )
+        train_eval(cfg)
 
 if __name__ == "__main__":
     main()
