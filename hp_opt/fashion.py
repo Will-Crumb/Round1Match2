@@ -45,7 +45,8 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
+# Because this dataset contains images, the model uses a cnn by default, and must be manually changed to use mlp.
+# You can adjust this in objective(trial).
 class SmallCNN(nn.Module):
     def __init__(self, dropout=0.2, num_classes=10):
         super().__init__()
@@ -197,6 +198,10 @@ def train_eval(cfg: TrainConfig):
     te_loss, te_acc = evaluate(model, test_loader, criterion, device)
     print(f"Test loss {te_loss:.4f} acc {te_acc:.4f}")
 
+'''
+This method helps perform HP optimization. It creates a training config that is used in run_optuna to perform HP tuning.
+The hyperparameters that are being tuned in this script include the batch size, learning rate, weight decay, and dropout rate.
+'''
 def objective(trial):
     cfg = TrainConfig(
         model_type="cnn",
@@ -221,7 +226,11 @@ def objective(trial):
         best_val_acc = max(best_val_acc, va_acc)
 
     return best_val_acc
-
+'''
+This method performs HP tuning. It also prints the best values for the hyperparameters as determined by the optimization function.
+This method uses the default optimization function for optuna, which employs the Tree-Structured Parzan Estimator algorithm.
+After optimization, this method also retrains the model using the best values for each hyperparameter and saves the new best model.
+'''
 def run_optuna(n_trials, save_path="./fashion_mnist_optuna.pt"):
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
@@ -247,6 +256,11 @@ def run_optuna(n_trials, save_path="./fashion_mnist_optuna.pt"):
 # CLI
 # ---------------------------
 
+'''
+Three arguments were added or changed. The save-path argument was changed to avoid overwriting the original model.
+The optimize and n_trials arguments were added, as they are used with the optimization methods.
+The optimize option is only used to determine if the program should be run through the optimization methods or if the program should create the original model.
+'''
 def parse_args():
     p = argparse.ArgumentParser(description="Fashion-MNIST baseline (PyTorch)")
     p.add_argument("--model", type=str, default="cnn", choices=["cnn", "mlp"], help="Model type")
@@ -264,7 +278,9 @@ def parse_args():
     p.add_argument("--n_trials", type=int, default=5, help="Number of Optuna trials")
     return p.parse_args()
 
-
+'''
+The if-statement in this method determines whether or not the optimization methods are used while the program is run.
+'''
 def main():
     args = parse_args()
 
