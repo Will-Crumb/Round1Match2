@@ -14,6 +14,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
+#imported optuna for hyperparameter optimization
 import optuna
 
 
@@ -154,13 +155,13 @@ def run_classification(cfg: RFConfig):
 
     print("\n== Adult Income (classification) ==")
     eval_split("Train", X_train, y_train)
-    val_acc, val_f1 = eval_split(" Val ", X_val, y_val)
+    val_acc, val_f1 = eval_split(" Val ", X_val, y_val) #changed this line to store the f1 score
     eval_split(" Test", X_test, y_test)
 
     print("\nClassification report (Validation):")
     print(classification_report(y_val, pipe.predict(X_val), digits=4))
 
-    return pipe, val_f1
+    return pipe, val_f1 #added f1 to the return values to be used for optimization
 
 
 def run_regression(cfg: RFConfig):
@@ -180,12 +181,13 @@ def run_regression(cfg: RFConfig):
 
     print("\n== California Housing (regression) ==")
     eval_split("Train", X_train, y_train)
-    val_r2, val_mae = eval_split(" Val ", X_val, y_val)
+    val_r2, val_mae = eval_split(" Val ", X_val, y_val) #changed this line to store the r2
     eval_split(" Test", X_test, y_test)
 
-    return pipe, val_r2
+    return pipe, val_r2 #added r2 to the return to be used for optimization
 
 def objective(trial, dataset: str):
+    #defining the hyperparameter search space for each hyperparameter
     cfg = RFConfig(
         dataset=dataset,
         n_estimators=trial.suggest_int("n_estimators", 100, 200),
@@ -196,6 +198,7 @@ def objective(trial, dataset: str):
         random_state=42
     )
 
+    #run the correct function based on the dataset being used
     if dataset == "adult":
         _,score = run_classification(cfg)
         return score
@@ -204,12 +207,15 @@ def objective(trial, dataset: str):
         return score
     
 def run_optuna(dataset: str, n_trials: int, save_path: str):
+    #create a new optuna study
     study = optuna.create_study(direction="maximize")
+    #run Bayesian optimization for n_trials
     study.optimize(lambda trial: objective(trial, dataset), n_trials=n_trials)
 
     print("\nBest hyperparameters:", study.best_params)
     print("Best score:", study.best_value)
 
+    #set the values to the best hyperparameters from the study
     best_params = study.best_params
     cfg = RFConfig(
         dataset=dataset,
@@ -222,6 +228,7 @@ def run_optuna(dataset: str, n_trials: int, save_path: str):
         save_path=save_path
     )
 
+    #run the correct function based on the dataset being used
     if dataset == "adult":
         pipe, _ = run_classification(cfg)
     else:
@@ -245,17 +252,18 @@ def parse_args():
     p.add_argument("--max_features", type=str, default="sqrt")
     p.add_argument("--n_jobs", type=int, default=-1)
     p.add_argument("--save_path", type=str, default="./rf_model_optuna.joblib")
-    p.add_argument("--optimize", type=bool, default="true")
-    p.add_argument("--n_trials", type=int, default=5)
+    p.add_argument("--optimize", type=bool, default="true") #added this in to allow to run with/without optimization
+    p.add_argument("--n_trials", type=int, default=5) #sets default trials to 5
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
+    #checks if optimize is true (it is by default)
     if args.optimize:
-        run_optuna(args.dataset, args.n_trials, args.save_path)
-    else:
+        run_optuna(args.dataset, args.n_trials, args.save_path) #run the model using hyperparameter optimization
+    else: #run the model without hyperparameter optimization
         cfg = RFConfig(
             dataset=args.dataset,
             test_size=args.test_size,
